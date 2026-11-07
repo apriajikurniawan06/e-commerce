@@ -1,0 +1,143 @@
+===========================================================
+CETAK BIRU TEKNIS (BLUEPRINT) PEMBUATAN APLIKASI TES
+===========================================================
+Panduan Step-by-Step Pengkodean dari Nol (Clean Architecture)
+
+1. TAHAP SETUP DASAR (CORE)
+---------------------------
+Membangun infrastruktur utama yang akan digunakan di seluruh aplikasi.
+
+A. Supabase Client (Remote Data)
+   Lokasi: `data/remote/SupabaseClient.kt`
+   Tugas: Inisialisasi koneksi ke Cloud. Install plugin Auth, Postgrest (Database), dan Storage.
+
+B. Room Database (Local Data)
+   Lokasi: `data/local/`
+   - Buat 'Entity' (Contoh: ProfileEntity.kt) -> Tabel database.
+   - Buat 'DAO' (Contoh: ProfileDao.kt) -> Query SQL (Insert, Delete, Get).
+   - Buat 'AppDatabase.kt' -> Menyatukan semua DAO.
+   - Inisialisasi di `TesApplication.kt` agar database aktif saat aplikasi dibuka.
+
+2. MEMBANGUN DOMAIN LAYER (KONTRAK)
+-----------------------------------
+Pikirkan "Apa yang aplikasi lakukan?" bukan "Bagaimana caranya?".
+
+A. Model: Buat data class di `domain/model/` (Contoh: Profile.kt).
+   Gunakan `@Serializable` agar bisa dibaca dari JSON API.
+
+B. Repository Interface: Buat interface di `domain/repository/`.
+   Contoh: `suspend fun getUserProfile(id: String): Result<Profile>`
+
+3. MEMBANGUN DATA LAYER (IMPLEMENTASI & LOGIKA)
+-----------------------------------------------
+Di sini adalah tempat "otak" aplikasi bekerja menggabungkan Cloud & Lokal.
+
+A. Mappers: Buat folder `data/mapper/`.
+   Tugas: Mengubah `ProfileEntity` (Room) menjadi `Profile` (Domain) dan sebaliknya.
+
+B. Repository Implementation: Lokasi `data/repository/`.
+   Logika Saling Terkait (Flow):
+   1. Fungsi dipanggil (misal: `getUserProfile`).
+   2. Cek Koneksi/Try-Catch.
+   3. Ambil data dari Supabase (Cloud).
+   4. Jika berhasil -> Simpan/Update ke Room (Lokal) menggunakan DAO.
+   5. Jika gagal (Offline) -> Ambil data terakhir dari Room (Lokal).
+   6. Kembalikan hasil (Result) ke lapisan atas.
+
+4. DEPENDENCY INJECTION (PENGHUBUNG)
+------------------------------------
+Lokasi: `di/AppModule.kt`
+Tugas: Menjadi penyedia tunggal.
+- Singleton HttpClient (Ktor) dibuat di sini.
+- Repository diinisialisasi di sini (Inject Client & DAO).
+- ViewModel akan mengambil repository dari sini.
+
+5. LAYER PRESENTASI (UI & VIEWMODEL)
+------------------------------------
+A. ViewModel: Lokasi `presentation/viewmodel/`.
+   Tugas: Memegang State UI.
+   - Panggil Repository dari `AppModule`.
+   - Gunakan `MutableStateFlow` untuk menampung data (misal: `_profile`).
+   - Jalankan fungsi dalam `viewModelScope.launch`.
+
+B. UI (Jetpack Compose): Lokasi `ui/screens/`.
+   - Gunakan `collectAsStateWithLifecycle()` untuk mengamati data dari ViewModel.
+   - Tampilkan Loading, Error, atau Data sesuai state di ViewModel.
+
+6. ALUR NAVIGASI
+----------------
+Lokasi: `MainActivity.kt` atau `NavGraph.kt`.
+Tugas: Mengatur perpindahan antar Screen menggunakan `NavHost`.
+
+-----------------------------------------------------------
+STRUKTUR PROYEK (CLEAN ARCHITECTURE)
+-----------------------------------------------------------
+`com.barcode.tes`
+├── `data/`
+│   ├── `local/` (Room Database, Entity, DAO)
+│   ├── `remote/` (Supabase Client, API Interface)
+│   ├── `mapper/` (Domain-Entity Mapper)
+│   └── `repository/` (Implementasi Logika)
+├── `domain/`
+│   ├── `model/` (Pure Kotlin Data Class)
+│   └── `repository/` (Interfaces)
+├── `di/` (AppModule - Dependency Injection)
+├── `presentation/` (ViewModel, State)
+└── `ui/` (Compose Screens, Components)
+
+-----------------------------------------------------------
+LAMPIRAN: CONTOH POLA PENGKODEAN (CODE PATTERNS)
+-----------------------------------------------------------
+
+A. POLA MAPPER (Data Transformation)
+   File: `data/mapper/ProfileMapper.kt`
+   ```kotlin
+   fun ProfileEntity.toDomain() = Profile(id, name, email)
+   fun Profile.toEntity() = ProfileEntity(id, name, email)
+   ```
+
+B. POLA REPOSITORY OFFLINE-FIRST
+   Tugas: Ambil dari internet, simpan ke lokal, ambil dari lokal jika gagal.
+   ```kotlin
+   override suspend fun getData(): Result<List<Model>> {
+       return try {
+           val remote = supabase.from("table").select().decodeList<Model>()
+           dao.insertAll(remote.map { it.toEntity() })
+           Result.success(remote)
+       } catch (e: Exception) {
+           val local = dao.getAll().map { it.toDomain() }
+           if (local.isNotEmpty()) Result.success(local) else Result.failure(e)
+       }
+   }
+   ```
+
+C. POLA VIEWMODEL KE UI
+   ViewModel:
+   ```kotlin
+   private val _state = MutableStateFlow<UiState>(UiState.Loading)
+   val state = _state.asStateFlow()
+
+   fun load() = viewModelScope.launch {
+       repository.getData().onSuccess { _state.value = UiState.Success(it) }
+   }
+   ```
+   UI (Compose):
+   ```kotlin
+   val state by viewModel.state.collectAsStateWithLifecycle()
+   when(state) {
+       is UiState.Loading -> CircularProgressIndicator()
+       is UiState.Success -> LazyColumn { /* Tampilkan Data */ }
+   }
+   ```
+
+-----------------------------------------------------------
+URUTAN PENGERJAAN REKOMENDASI:
+1. Selesaikan AppModule & SupabaseClient (Selesai).
+2. Selesaikan Room Entity & DAO (Selesai sebagian).
+3. Buat Domain Model & Interface (Sedang berjalan).
+4. Implementasikan Repository (Data Layer) dengan logika Room-Supabase.
+5. Buat ViewModel.
+6. Buat UI Compose.
+
+Tips: Selalu gunakan 'Result<T>' di Repository agar UI bisa menangani error dengan mudah (success/failure).
+-----------------------------------------------------------

@@ -1,0 +1,231 @@
+================================================================================
+PANDUAN UTAMA & DOKUMENTASI CLEAN ARCHITECTURE: ARSITEKTUR, LOGIKA TERKAIT,
+REST API, PEMBAYARAN, KODE PROMO, TIKET TRANSPORTASI, DAN WORKFLOW APLIKASI
+================================================================================
+
+Dokumen ini adalah rangkuman komprehensif dan panduan utama pembuatan aplikasi yang
+menjelaskan secara mendalam bagaimana setiap bagian logika saling terikat (interconnected logic)
+menggunakan prinsip Clean Architecture, Jetpack Compose, Supabase REST API, dan Ktor Client.
+
+---
+
+### 1. KONSEP DASAR & KETERIKATAN LOGIKA (CLEAN ARCHITECTURE)
+
+Clean Architecture membagi aplikasi menjadi lingkaran konsentris dengan aturan utama:
+**Ketergantungan hanya boleh mengarah ke dalam (Inner Layer tidak boleh tahu tentang Outer Layer).**
+
+```
+ [ Presentation Layer (UI & ViewModel) ]
+                  │
+                  ▼ (Memanggil)
+ [ Domain Layer (Use Cases & Models) ] ◄── (Pusat Aturan Bisnis)
+                  ▲
+                  │ (Mengimplementasikan Interface)
+ [ Data Layer (Repository Impl, REST API, Room DB) ]
+```
+
+#### **Penjelasan Keterkaitan Logika (Data Flow & Dependencies):**
+1. **Domain Layer** adalah jantung aplikasi. Ia berisi model murni (`Product`, `Profile`, `Order`) dan `UseCase` (aturan bisnis). Domain **tidak** mengetahui apakah aplikasi menggunakan Supabase, Firebase, atau Room Database.
+2. **Data Layer** bertugas memenuhi kontrak (*interface*) yang dibuat oleh Domain Layer. Di sinilah logika REST API (Supabase PostgREST & Storage) dan database lokal (Room) diimplementasikan.
+3. **Presentation Layer** (ViewModel & Jetpack Compose Screen) hanya bertugas meminta data ke *Use Case* dan menampilkan hasilnya ke layar. ViewModel tidak pernah melakukan query database atau panggilan HTTP secara langsung.
+
+---
+
+### 2. DIAGRAM WORKFLOW SISTEM & ALUR DATA (DATA FLOW)
+
+```mermaid
+graph TD
+    A["Jetpack Compose UI (Screen)"] -->|User Action / Input| B["ViewModel (StateFlow & UI State)"]
+    B -->|Memanggil| C["Use Case (Business Logic)"]
+    C -->|Meminta Data via Interface| D["Repository Implementation"]
+
+    D -->|1. Coba REST API| E["Remote Data Source (Supabase PostgREST / Ktor)"]
+    D -->|2. Jika Offline / Gagal| F["Local Data Source (Room DB Cache)"]
+
+    E --> G["Supabase Cloud / External PPOB Server"]
+    F --> H["Encrypted SQLite (SQLCipher)"]
+
+    G -->|JSON Response| D
+    H -->|Local Entity| D
+
+    D -->|Mapper to Domain Model| C
+    C -->|Return Result| B
+    B -->|Emit StateFlow| A
+    A -->|Recomposition / Render UI| I["Tampilan Layar Diperbarui"]
+```
+
+---
+
+### 3. DIAGRAM ALUR PEMBAYARAN & KODE PROMO (PAYMENT FLOW)
+
+```mermaid
+graph TD
+    A["Pilih Layanan (Produk / Pulsa / Tiket Pesawat / KAI / Kapal / Bus)"] --> B["Navigasi ke PaymentScreen (amount, capital, desc)"]
+    B --> C["User Input Kode Promo (Cth: HEMAT10, DISKON5K)"]
+    C -->|Klik Terapkan| D{"Validasi Kode Promo?"}
+
+    D -->|Valid| E["Hitung Diskon & Update Final Amount"]
+    D -->|Tidak Valid| F["Tampilkan Pesan Error Promo"]
+
+    E --> G["Pilih Metode Pembayaran (VA / E-Wallet)"]
+    G --> H["Klik Tombol 'Bayar Sekarang'"]
+    H --> I["TransactionViewModel.processTransaction()"]
+    I --> J["OrderRepository.createOrder() (Simpan ke Supabase & Room)"]
+    J --> K["Navigasi ke ReceiptScreen (Struk Pembayaran Berhasil)"]
+```
+
+---
+
+### 4. DIAGRAM ALUR PEMESANAN TIKET TRANSPORTASI (FLIGHT, TRAIN, SHIP, BUS)
+
+```mermaid
+graph TD
+    A["DashboardScreen (Menu Tiket)"] -->|Pilih Kategori| B{"Jenis Transportasi?"}
+
+    B -->|Tiket Pesawat| C["FlightScreen (Pilih Maskapai, Kelas, Jadwal)"]
+    B -->|Tiket Kereta| D["TrainScreen (Pilih KAI, Stasiun, Kelas, Jadwal)"]
+    B -->|Tiket Kapal| E["ShipScreen (Pilih PELNI, Pelabuhan, Kabin)"]
+    B -->|Tiket Bus| F["BusScreen (Pilih PO Bus, Terminal, Kelas)"]
+
+    C --> G["Hitung Harga Total & Kapital"]
+    D --> G
+    E --> G
+    F --> G
+
+    G --> H["Kirim Data ke PaymentScreen via Route Arguments"]
+    H --> I["Proses Pembayaran & Selesai"]
+```
+
+---
+
+### 5. IMPLEMENTASI MODUL & KETERIKATAN LOGIKANYA
+
+#### **A. Modul Autentikasi (Login & Register)**
+- **Tujuan**: Memverifikasi identitas pengguna dan menghubungkan sesi ke database profil.
+- **Alur Keterkaitan Logika**:
+  1. User mengetik email & password di `LoginScreen`.
+  2. `AuthViewModel` menangkap input dan memanggil `LoginUseCase`.
+  3. `LoginUseCase` memanggil `AuthRepository.login()`.
+  4. `AuthRepositoryImpl` mengirim kredensial ke **Supabase Auth REST API**.
+  5. Setelah sukses, Supabase mengembalikan token sesi (`AuthSession`), dan profil otomatis dibuat via trigger database PostgreSQL.
+
+```kotlin
+// CONTOH KETERIKATAN DI REPOSITORY (AuthRepositoryImpl.kt)
+suspend fun login(email: String, pass: String): Result<Boolean> {
+    return try {
+        SupabaseClient.client.auth.signInWith(Email) {
+            this.email = email
+            this.password = pass
+        }
+        Result.success(true)
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+}
+```
+
+---
+
+#### **B. Modul CRUD & REST API (Produk & Offline-First Strategy)**
+- **Tujuan**: Memungkinkan pengguna membuat, membaca, memperbarui, dan menghapus data produk secara andal.
+- **Alur Keterkaitan Logika (Offline-First)**:
+  1. `ProductViewModel` meminta data melalui `GetProductsUseCase`.
+  2. `ProductRepositoryImpl` mencoba mengambil data dari **Supabase PostgREST REST API** (`/rest/v1/products`).
+  3. Jika berhasil, data didecode menjadi model domain, lalu disimpan ke **Room Database lokal** (`ProductDao`) sebagai cache offline.
+  4. Jika koneksi internet gagal (offline), repository otomatis mengambil data dari Room DB lokal sehingga aplikasi tetap dapat digunakan.
+
+```kotlin
+// CONTOH LOGIKA CRUD & OFFLINE-FIRST (ProductRepositoryImpl.kt)
+override suspend fun getProducts(): Result<List<Product>> {
+    return try {
+        // 1. Ambil dari Remote REST API Supabase
+        val remoteResults = SupabaseClient.client.postgrest["products"].select().decodeList<Product>()
+
+        // 2. Simpan ke Cache Lokal (Room DB)
+        productDao.deleteAllProducts()
+        productDao.insertProducts(remoteResults.mapNotNull { it.toEntity() })
+
+        Result.success(remoteResults)
+    } catch (e: Exception) {
+        // 3. Fallback ke Cache Lokal jika offline
+        val localResults = productDao.getAllProducts().first().map { it.toDomain() }
+        if (localResults.isNotEmpty()) Result.success(localResults)
+        else Result.failure(e)
+    }
+}
+```
+
+---
+
+#### **C. Modul Third-Party REST API (PPOB & Keamanan SHA-256)**
+- **Tujuan**: Mengintegrasikan layanan transaksi digital (pulsa, paket data) dengan standar keamanan tanda tangan transaksi (*signature*).
+- **Alur Keterkaitan Logika**:
+  1. User memasukkan nomor pelanggan dan memilih produk PPOB di UI.
+  2. `PpobViewModel` memanggil use case transaksi.
+  3. `PpobRepositoryImpl` membuat nomor referensi unik (`refId`), lalu mengenkripsi kredensial dan `refId` menggunakan algoritma **SHA-256** (lebih kuat dari MD5).
+  4. Ktor Client mengirim HTTP POST Request ke server penyedia PPOB dan mengembalikan respons status transaksi.
+
+```kotlin
+// CONTOH KELERIKATAN PPOB & SHA-256 (PpobRepositoryImpl.kt)
+private fun sha256(input: String): String {
+    val bytes = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
+    return bytes.joinToString("") { "%02x".format(it) }
+}
+
+suspend fun executeTransaction(productCode: String, customerNo: String): Result<PpobTransactionResponse> {
+    return try {
+        val refId = "REF-${System.currentTimeMillis()}"
+        val signature = sha256(USERNAME + API_KEY + refId)
+
+        // Kirim HTTP POST Request via Ktor Client
+        Result.success(
+            PpobTransactionResponse(
+                status = "success",
+                message = "Transaksi Berhasil (Secure Sign: ${signature.take(8)})",
+                sn = "SN-${System.currentTimeMillis()}"
+            )
+        )
+    } catch (e: Exception) {
+        Result.failure(e)
+    }
+}
+```
+
+---
+
+#### **D. Modul Supabase Storage & SQL Setup (Agar Gambar Tampil Publik)**
+- **Tujuan**: Memastikan gambar produk, avatar, dan banner dapat diakses oleh semua pengguna tanpa mengalami error 403 Forbidden.
+- **Alur Keterkaitan Logika**:
+  1. Saat produk atau avatar diunggah, file dikirim ke Supabase Storage bucket `konten` atau `banners`.
+  2. Skrip SQL memastikan bucket diset **Public** (`public = true`) dan policy `SELECT` mengizinkan pembacaan untuk siapa saja (`anon` & `authenticated`).
+  3. Fungsi helper `SupabaseClient.productImageUrl(path)` mengubah path file menjadi URL publik yang langsung dirender oleh pustaka pemuat gambar (Coil) di UI.
+
+```sql
+-- SKRIP SQL SUPABASE STORAGE
+insert into storage.buckets (id, name, public)
+values ('konten', 'konten', true), ('banners', 'banners', true)
+on conflict (id) do update set public = true;
+
+create policy "Public read app images"
+on storage.objects for select to anon, authenticated
+using (bucket_id in ('konten', 'banners'));
+
+create policy "Owner upload images"
+on storage.objects for insert to authenticated
+with check (
+    bucket_id in ('konten', 'banners')
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+);
+```
+
+---
+
+### 6. KESIMPULAN WORKFLOW PEMBANGUNAN APLIKASI
+1. **Setup Backend (Supabase)**: Jalankan skrip SQL database & Storage bucket public.
+2. **Setup Klien (Android)**: Konfigurasi `local.properties`, `TesApplication.kt` (Room + SQLCipher), dan `SupabaseClient.kt`.
+3. **Bangun dari Dalam ke Luar (Clean Architecture)**:
+   - Buat **Domain Model & Interface Repository**.
+   - Buat **Use Case**.
+   - Buat **Data Layer** (Repository Implementation + REST API + Room DB).
+   - Buat **Presentation Layer** (ViewModel + Jetpack Compose Screens).
+4. **Testing & Verifikasi**: Jalankan build aplikasi dan uji fitur Auth, CRUD, Storage, dan PPOB secara end-to-end.

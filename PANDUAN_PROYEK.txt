@@ -1,0 +1,55 @@
+# PANDUAN PENGEMBANGAN PROYEK: BISNIZKU (100% SELESAI)
+
+## TAHAP 1: PERSIAPAN BACKEND (SUPABASE)
+Aplikasi ini menggunakan Supabase sebagai server utama.
+1. Buat Proyek: Buat proyek baru di Supabase Dashboard (https://supabase.com/).
+2. Eksekusi Database: Buka SQL Editor dan jalankan script SQL (Tabel profiles, products, orders, banners, dll).
+   * PENTING: Pastikan Trigger handle_new_user sudah terpasang agar saat user daftar, data profil otomatis terisi.
+3. Storage: Buat bucket baru bernama 'konten' di menu Storage. Atur aksesnya menjadi Public.
+4. Autentikasi:
+   * Aktifkan Provider Email.
+   * Aktifkan Provider Google (masukkan Client ID & Secret dari Google Cloud Console).
+
+## TAHAP 2: KONFIGURASI PROYEK ANDROID (STUDIO)
+1. Dependencies: Masukkan library wajib di build.gradle.kts (Supabase, Room, SQLCipher, Ktor, Coil, Compose).
+2. Keamanan API: Tambahkan kunci berikut di file local.properties:
+   SUPABASE_URL=https://xyz.supabase.co
+   SUPABASE_ANON_KEY=your_key_here
+   DB_PASSWORD=your_database_encryption_password
+3. Manifest: Daftarkan TesApplication di AndroidManifest.xml pada tag <application android:name=".TesApplication" ...>.
+
+## TAHAP 3: MEMBANGUN FONDASI (FOLDER DATA & DOMAIN)
+Gunakan struktur Clean Architecture:
+1. Domain Layer: Definisi Model, Interface Repository, dan UseCase (Logika Bisnis).
+2. Data Layer: Konfigurasi Remote (Supabase), Local (Room + SQLCipher), Implementasi Repository, dan Mapper.
+
+## TAHAP 4: CORE LOGIC & SECURITY
+1. TesApplication.kt: Inisialisasi Room dengan SQLCipher.
+   * KRUSIAL: Gunakan SupportFactory(passphrase, null, false) agar kunci tidak dihapus dari memori.
+2. AppModule.kt: Pusat Dependency Injection (DI) manual untuk menghubungkan antar lapisan.
+
+## TAHAP 5: PRESENTATION LAYER (VIEWMODEL & UI)
+1. Navigation: Atur rute antar layar di NavGraph.
+2. ViewModels: Pengelola status UI (Loading, Error, Data).
+3. Screens (Compose):
+   * Login: Fitur Email & Google.
+   * Dashboard: Banner dinamis & Grid Menu.
+   * Pulsa: Deteksi provider otomatis & kalkulasi admin fee.
+
+## TAHAP 6: FITUR KHUSUS & SIMULASI
+1. PPOB (Pulsa/Data): Simulasi transaksi via Sandbox mode di PpobRepositoryImpl.kt.
+2. Keuntungan: Perhitungan Laba Bersih (Harga Jual - Harga Modal) di halaman Profil.
+
+## TAHAP 7: MAINTENANCE & UPDATE
+1. Update Schema: Jika tabel berubah, naikkan 'version' di AppDatabase.kt dan ganti nama database di TesApplication.kt (misal ke v5).
+2. Performa: Masukkan folder proyek ke Exclusion Microsoft Defender agar build cepat.
+
+## RINGKASAN CEKLIST:
+[ ] SQL Database di Supabase Sukses.
+[ ] Supabase Storage 'konten' sudah Public.
+[ ] local.properties sudah terisi URL & Key.
+[ ] Login & Register (Email/Google) lancar.
+[ ] Database Room Terenkripsi (SQLCipher) tidak crash.
+[ ] Fitur Pulsa bisa deteksi provider & hitung fee.
+[ ] Banner Dashboard muncul otomatis dari server.
+[ ] Halaman Profil bisa hitung Laba Bersih.

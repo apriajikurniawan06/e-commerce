@@ -1,0 +1,175 @@
+====================================================================
+PANDUAN LENGKAP STRUKTUR & LOGIKA PENGERJAAN PROYEK (CLEAN ARCHITECTURE)
+====================================================================
+
+Buku panduan ini menjelaskan fungsi setiap folder, file, serta alasan
+teknis di balik penggunaan "MAPPER" dan "REPOSITORY".
+
+--------------------------------------------------------------------
+1. APA ITU REPOSITORY? (SANG MANAJER DATA)
+--------------------------------------------------------------------
+Repository adalah "Pintu Tunggal" untuk mengambil data.
+- FUNGSI: Mengatur dari mana data diambil. Apakah dari Internet (Supabase)
+  atau dari memori HP (Room)?
+- TUJUAN: Agar bagian Tampilan (UI) tidak perlu tahu cara ambil data.
+  UI cukup bilang: "Saya mau daftar produk", dan Repository yang bekerja
+  keras mencarinya (Cek internet -> kalau ada ambil -> simpan ke HP -> kasih ke UI).
+
+--------------------------------------------------------------------
+2. APA ITU MAPPER? (SANG PENERJEMAH)
+--------------------------------------------------------------------
+Mapper adalah fungsi untuk mengubah bentuk data.
+- FUNGSI: Mengubah data Database (Entity) menjadi data murni (Domain Model).
+- TUJUAN: Database Room punya aturan ketat (misal: ID harus angka).
+  Tapi UI mungkin ingin ID itu sebagai Teks. Mapper melakukan tugas "terjemahan"
+  ini di tengah jalan agar Database dan UI tidak bertengkar.
+
+--------------------------------------------------------------------
+3. APA ITU USE CASE? (SANG SPESIALIS TUGAS)
+--------------------------------------------------------------------
+Use Case berada di dalam folder `domain/usecase/`.
+- FUNGSI: Membungkus SATU tugas spesifik atau satu "kata kerja" dalam aplikasi.
+  Contoh: `GetProductsUseCase` hanya bertugas mengambil produk. `LoginUseCase`
+  hanya bertugas mengurus login.
+- TUJUAN:
+  1. Menjaga ViewModel tetap langsing (tidak terlalu banyak kode).
+  2. Memudahkan pembacaan kode. Cukup lihat nama filenya, kita tahu aplikasi
+     ini bisa melakukan apa saja.
+  3. Reusability: Satu Use Case bisa dipakai oleh banyak ViewModel yang berbeda.
+
+--------------------------------------------------------------------
+5. PENJELASAN MENDALAM: MODEL & REPOSITORY
+--------------------------------------------------------------------
+
+A. MODEL (Bentuk Data / Barang)
+   - TUJUAN: Menjadi standar "bentuk" data yang dipahami oleh seluruh aplikasi.
+   - ANALOGI: Jika aplikasi adalah toko, Model adalah "Barang" yang dijual (misal: Sabun, Sampo).
+   - HUBUNGAN KE FILE LAIN:
+     1. Ke UI: UI menggunakan Model untuk menampilkan teks/gambar.
+     2. Ke Use Case: Use Case mengirimkan Model ini ke ViewModel.
+     3. Ke Mapper: Mapper bertugas mengubah data mentah database menjadi Model ini.
+
+B. REPOSITORY (Gudang & Manajer Data)
+   - TUJUAN: Menyembunyikan kerumitan cara ambil data. UI tidak perlu tahu data
+     diambil lewat kabel internet atau memori HP.
+   - ANALOGI: Manajer Gudang. Jika ada yang minta barang (Model), Manajer yang
+     cari di rak (Database) atau pesan ke pusat (Internet).
+   - HUBUNGAN KE FILE LAIN:
+     1. Ke Supabase/Ktor: Repository menggunakan mereka untuk ambil data internet.
+     2. Ke Room (DAO): Repository menggunakan ini untuk simpan/ambil data di HP.
+     3. Ke Use Case: Repository memberikan data (Model) kepada Use Case.
+     4. Ke AppModule: Repository didaftarkan di sini agar bisa dipakai di mana-mana.
+
+--------------------------------------------------------------------
+7. BAGAIMANA MEREKA BEKERJA SAMA? (SIKLUS HIDUP DATA)
+--------------------------------------------------------------------
+Berikut adalah urutan kejadian saat user meminta data (misal: Klik tombol "Cek Saldo"):
+
+TAHAP 1: PERMINTAAN (UI -> DOMAIN)
+   1. User klik tombol di [UI/Layar].
+   2. UI memanggil fungsi di [ViewModel].
+   3. ViewModel memanggil [UseCase] (Misal: `GetBalanceUseCase`).
+   4. UseCase memanggil [Repository Interface] (Kontrak).
+
+TAHAP 2: EKSEKUSI (DOMAIN -> DATA LAYER)
+   5. [RepositoryImpl] di Data Layer menerima perintah tersebut.
+   6. RepositoryImpl pergi ke [Remote/Supabase] atau [Local/Room] untuk ambil data.
+   7. Data yang didapat masih "Kasar" (berupa JSON atau baris tabel SQL).
+
+TAHAP 3: TERJEMAHAN (DATA LAYER -> DOMAIN MODEL)
+   8. RepositoryImpl memanggil [Mapper].
+   9. Mapper mengubah data "Kasar" tadi menjadi [Model] yang rapi (Domain Model).
+
+TAHAP 4: PENGIRIMAN BALIK (DATA -> DOMAIN -> UI)
+   10. RepositoryImpl mengirim [Model] tersebut kembali ke [UseCase].
+   11. UseCase meneruskannya ke [ViewModel].
+   12. ViewModel mengubah "State" (Status data).
+   13. UI melihat perubahan tersebut dan menggambar datanya di layar user.
+
+KESIMPULAN HUBUNGAN:
+- DOMAIN LAYER (Model, UseCase, Repo Interface) adalah "Bos" yang menentukan APA yang harus dilakukan.
+- DATA LAYER (RepoImpl, Mapper, Remote, Local) adalah "Karyawan" yang mengerjakan BAGAIMANA cara mengambil datanya.
+- Kaitan Utamanya: [RepositoryImpl] adalah jembatan yang menghubungkan Bos (Domain) dengan alat-alat kerja (Internet & Database).
+
+A. FOLDER: domain/ (JANTUNG APLIKASI)
+   Folder ini berisi aturan bisnis murni. Tidak boleh ada kode internet/database di sini.
+   - domain/model/: File data class murni (Contoh: Product.kt).
+     Fungsi: Menjadi standar bentuk data untuk UI.
+   - domain/repository/: Berisi Interface (Daftar perintah).
+     Fungsi: Kontrak kerja (apa saja yang bisa dilakukan aplikasi).
+   - domain/usecase/: File logika per-aksi (Contoh: GetProductsUseCase.kt).
+     Fungsi: Menjalankan satu perintah spesifik dengan memanggil Repository.
+
+B. FOLDER: data/ (BURUH/PEKERJA DATA)
+   Folder ini berisi detail teknis cara mengambil data.
+   - data/remote/: SupabaseClient.kt.
+     Fungsi: Mengurus koneksi ke Cloud/Internet.
+   - data/local/: AppDatabase.kt, Entity, dan DAO.
+     Fungsi: Mengurus penyimpanan permanen di dalam HP (Room).
+   - data/mapper/: File penerjemah (Contoh: ProductMapper.kt).
+     Fungsi: Mengubah data antar layer (Lokal <-> Domain).
+   - data/repository/: Implementasi (Isi asli dari perintah di domain).
+     Fungsi: Logika penggabungan internet dan lokal.
+
+C. FOLDER: di/ (LEM PEREKAT)
+   - di/AppModule.kt:
+     Fungsi: Tempat membuat semua objek (Client, Database, Repository).
+     Tujuan: Agar satu objek bisa dipakai ramai-ramai (Hemat Memori).
+
+D. FOLDER: presentation/ (JEMBATAN LOGIKA)
+   - presentation/viewmodel/: File ViewModel.kt.
+     Fungsi: Menyiapkan data untuk layar. Jika user klik tombol,
+     ViewModel yang merespon dan memanggil Repository.
+
+E. FOLDER: ui/ (KULIT/TAMPILAN)
+   - ui/screens/: File Compose (Tampilan visual).
+     Fungsi: Tempat menggambar tombol, gambar, dan warna.
+   - ui/navigation/:
+     Fungsi: Peta jalan untuk pindah-pindah layar.
+
+--------------------------------------------------------------------
+4. ALUR KERJA SAAT MEMBUAT FITUR BARU (CONTOH: FITUR PRODUK)
+--------------------------------------------------------------------
+1. Buat Model di `domain/model/Product.kt`.
+2. Buat Interface di `domain/repository/ProductRepository.kt`.
+3. Buat Tabel di `data/local/entity/ProductEntity.kt`.
+4. Buat Query di `data/local/dao/ProductDao.kt`.
+5. Buat Penerjemah di `data/mapper/ProductMapper.kt`.
+6. Buat Logika di `data/repository/ProductRepositoryImpl.kt`.
+7. Daftarkan Repository di `di/AppModule.kt`.
+8. Buat Use Case di `domain/usecase/Product/GetProductsUseCase.kt`.
+9. Buat ViewModel di `presentation/viewmodel/ProductViewModel.kt`.
+10. Gambar layarnya di `ui/screens/ProductScreen.kt`.
+
+--------------------------------------------------------------------
+8. SEGITIGA EMAS DOMAIN LAYER (DALAM FOLDER DOMAIN)
+--------------------------------------------------------------------
+Di dalam folder `domain/`, ada 3 file yang saling bekerja sama secara erat
+tanpa mempedulikan dunia luar (Internet/Database):
+
+1. USE CASE (Si Peminta):
+   - Ia tahu APA yang ingin dilakukan user.
+   - Ia memanggil Repository Interface untuk minta data.
+   - Ia menerima hasil dalam bentuk MODEL.
+
+2. REPOSITORY INTERFACE (Si Kontrak):
+   - Ia adalah perantara. Ia tidak punya kode "asli", hanya nama fungsi.
+   - Ia menjanjikan kepada Use Case: "Kalau kamu panggil fungsi ini,
+     aku akan kembalikan data dalam bentuk MODEL ini".
+
+3. MODEL (Si Objek):
+   - Ia adalah bahasa yang digunakan Use Case dan Repository.
+   - Tanpa Model, Use Case tidak tahu data apa yang ia terima.
+
+HUBUNGAN MEREKA:
+[Use Case] --- bergantung pada ---> [Repo Interface]
+    |                                     |
+    |------- menggunakan data --------> [Model]
+
+CONTOH KODE DALAM DOMAIN:
+- Use Case: "Repo, tolong ambilkan saya (MODEL) Produk."
+- Repo Interface: "Oke, saya punya fungsi `getProducts(): List<(MODEL) Produk>`."
+
+MENGAPA HARUS BEGINI?
+Agar jika Anda mengganti Supabase dengan API lain, kode di dalam folder
+DOMAIN ini TIDAK PERLU BERUBAH sedikitpun. Inilah yang disebut "Clean".
